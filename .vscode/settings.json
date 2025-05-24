@@ -1,0 +1,34 @@
+{
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.languageServer": "Pylance",
+    "python.analysis.diagnosticMode": "workspace",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.inlayHints.functionReturnTypes": true,
+    "editor.formatOnSave": true,
+    "python.analysis.typeCheckingMode": "off",
+    "python.analysis.extraPaths": [],
+    "python.analysis.diagnosticSeverityOverrides": {
+      "reportArgumentType": "none"
+    },
+  
+    // Pytest 설정
+    "python.testing.pytestArgs": [],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+  
+    // Python 전용 포맷팅 설정 (VSCode 관리)
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.black-formatter",
+      "editor.formatOnType": true,
+      "editor.formatOnSave": true,
+      "editor.parameterHints.enabled": true,
+      "editor.codeActionsOnSave": {
+        "source.organizeImports": "always"
+      }
+    },
+  
+    // Ruff 설정 추가
+    "ruff.enable": true,
+    "ruff.organizeImports": true
+  }
+  
