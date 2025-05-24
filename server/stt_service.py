@@ -1,18 +1,16 @@
 import asyncio
-import json
 import base64
-import websockets
+import json
 import logging
-from typing import Optional
 import os
-from dotenv import load_dotenv
+
+import numpy as np
 from deepgram import (
     DeepgramClient,
-    DeepgramClientOptions,
-    LiveTranscriptionEvents,
     LiveOptions,
+    LiveTranscriptionEvents,
 )
-import numpy as np
+from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
@@ -20,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class STTService:
-    def __init__(self):
+    def __init__(self, stats_callback=None):
         self.api_key = os.getenv("DEEPGRAM_API_KEY")
         if not self.api_key:
             raise ValueError("DEEPGRAM_API_KEY not found in environment variables")
@@ -29,6 +27,13 @@ class STTService:
         self.deepgram = DeepgramClient(api_key=self.api_key)
         self.dg_connection = None
         self.client_ws = None
+
+        # 통계 콜백 함수 설정
+        self.stats_callback = stats_callback
+
+    def set_stats_callback(self, callback):
+        """통계 업데이트 콜백 함수 설정"""
+        self.stats_callback = callback
 
     async def create_deepgram_connection(self, client_ws):
         """Deepgram Live Transcription 연결 생성"""
@@ -115,6 +120,14 @@ class STTService:
                 logger.info(
                     f"✅ 최종 인식 완료: 「{sentence}」 (신뢰도: {confidence:.2f})"
                 )
+
+                # 통계 업데이트
+                if self.stats_callback:
+                    self.stats_callback(
+                        "transcription_completed",
+                        {"confidence": confidence, "text_length": len(sentence)},
+                    )
+
                 response = {
                     "type": "transcript_final",
                     "text": sentence,
@@ -352,4 +365,3 @@ class STTService:
                     pass
             self.client_ws = None
             logger.info("🧹 연결 정리 완료")
-
