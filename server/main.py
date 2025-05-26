@@ -128,18 +128,18 @@ async def root():
             
             <div class="streaming">
                 <strong>🌊 HTTP 스트리밍 방식 (토큰 단위):</strong><br>
-                <a href="/streaming-example" class="btn secondary">🎯 스트리밍 가이드</a>
-                <a href="/usage-streaming" class="btn secondary">📖 사용법 예시</a>
+                <a href="/usage" class="btn secondary">🎯 스트리밍 가이드</a>
+                <a href="/usage" class="btn secondary">📖 사용법 예시</a>
             </div>
             
             <h3>🌊 HTTP 스트리밍 빠른 시작</h3>
             <div class="code">
 // 1. 세션 생성
-const session = await fetch('/sessions/create', { method: 'POST' });
+const session = await fetch('/sessions', { method: 'POST' });
 const { session_id, stream_url } = await session.json();
 
 // 2. 실시간 스트리밍 연결
-const eventSource = new EventSource(`/stream/stt/${session_id}`);
+const eventSource = new EventSource(`/sessions/${session_id}/stream`);
 eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.event_type === 'token') {
@@ -148,7 +148,7 @@ eventSource.onmessage = (event) => {
 };
 
 // 3. 오디오 업로드
-await fetch(`/upload/audio/${session_id}`, {
+await fetch(`/sessions/${session_id}/audio`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audio_data: base64AudioData })
@@ -209,10 +209,11 @@ async def get_server_info():
             "health": "/health",
             "info": "/info",
             "docs": "/docs",
-            "create_session": "/sessions/create",
-            "stream_stt": "/stream/stt/{session_id}",
-            "upload_audio": "/upload/audio/{session_id}",
-            "usage_streaming": "/usage-streaming",
+            "create_session": "/sessions",
+            "stream_stt": "/sessions/{session_id}/stream",
+            "upload_audio": "/sessions/{session_id}/audio",
+            "delete_session": "/sessions/{session_id}",
+            "usage_guide": "/usage",
         },
         supported_formats=["pcm16"],
         features=[
@@ -229,7 +230,7 @@ async def get_server_info():
 
 
 @app.post(
-    "/sessions/create",
+    "/sessions",
     response_model=CreateSessionResponse,
     summary="🎯 스트리밍 세션 생성",
     description="HTTP 스트리밍을 위한 새로운 세션을 생성합니다. 생성된 세션 ID로 스트리밍 연결과 오디오 업로드가 가능합니다.",
@@ -246,8 +247,8 @@ async def create_streaming_session(request: CreateSessionRequest = None):
 
         return CreateSessionResponse(
             session_id=session_id,
-            stream_url=f"/stream/stt/{session_id}",
-            upload_url=f"/upload/audio/{session_id}",
+            stream_url=f"/sessions/{session_id}/stream",
+            upload_url=f"/sessions/{session_id}/audio",
             config=config,
         )
     except Exception as e:
@@ -256,7 +257,7 @@ async def create_streaming_session(request: CreateSessionRequest = None):
 
 
 @app.get(
-    "/stream/stt/{session_id}",
+    "/sessions/{session_id}/stream",
     summary="🌊 실시간 토큰 스트리밍",
     description="""
     **Server-Sent Events를 통한 실시간 토큰 단위 전사 스트리밍**
@@ -265,7 +266,7 @@ async def create_streaming_session(request: CreateSessionRequest = None):
     
     **사용법:**
     ```javascript
-    const eventSource = new EventSource('/stream/stt/sess_abc123');
+    const eventSource = new EventSource('/sessions/sess_abc123/stream');
     eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.event_type === 'token') {
@@ -321,7 +322,7 @@ async def stream_stt_results(session_id: str):
 
 
 @app.post(
-    "/upload/audio/{session_id}",
+    "/sessions/{session_id}/audio",
     response_model=AudioUploadResponse,
     summary="🎤 오디오 업로드",
     description="""
@@ -338,7 +339,7 @@ async def stream_stt_results(session_id: str):
     **사용 예시:**
     ```javascript
     const audioData = base64EncodeAudio(pcm16Buffer);
-    await fetch('/upload/audio/sess_abc123', {
+    await fetch('/sessions/sess_abc123/audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio_data: audioData })
@@ -398,33 +399,33 @@ async def close_streaming_session(session_id: str):
 
 
 @app.get(
-    "/usage-streaming",
+    "/usage",
     response_model=StreamingUsageExample,
     summary="🌊 HTTP 스트리밍 사용법",
     description="HTTP Server-Sent Events를 통한 실시간 토큰 스트리밍 사용법과 예시를 제공합니다.",
-    tags=["🌊 HTTP Streaming"],
+    tags=["📖 Documentation"],
 )
 async def get_streaming_usage_guide():
     """HTTP 스트리밍 사용법 가이드"""
     return StreamingUsageExample(
         step1_create_session={
             "method": "POST",
-            "url": "/sessions/create",
+            "url": "/sessions",
             "body": {"config": {"language": "ko", "interim_results": True}},
             "response": {
                 "session_id": "sess_abc123",
-                "stream_url": "/stream/stt/sess_abc123",
+                "stream_url": "/sessions/sess_abc123/stream",
             },
         },
         step2_start_streaming={
             "method": "GET",
-            "url": "/stream/stt/sess_abc123",
+            "url": "/sessions/sess_abc123/stream",
             "headers": {"Accept": "text/event-stream"},
             "description": "Server-Sent Events로 실시간 토큰 수신",
         },
         step3_upload_audio={
             "method": "POST",
-            "url": "/upload/audio/sess_abc123",
+            "url": "/sessions/sess_abc123/audio",
             "body": {"audio_data": "base64_pcm16_data...", "chunk_id": "chunk_001"},
         },
         step4_receive_tokens={

@@ -70,7 +70,7 @@ class HTTPStreamingClient:
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/sessions/create", json=request_data, timeout=10.0
+                    f"{self.base_url}/sessions", json=request_data, timeout=10.0
                 )
 
                 if response.status_code == 200:
@@ -112,7 +112,7 @@ class HTTPStreamingClient:
     def _stream_sse_sync(self):
         """SSE 스트리밍 (동기 방식)"""
         try:
-            url = f"{self.base_url}/stream/stt/{self.session_id}"
+            url = f"{self.base_url}/sessions/{self.session_id}/stream"
             headers = {"Accept": "text/event-stream", "Cache-Control": "no-cache"}
 
             with requests.get(
@@ -217,7 +217,7 @@ class HTTPStreamingClient:
 
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/upload/audio/{self.session_id}",
+                    f"{self.base_url}/sessions/{self.session_id}/audio",
                     json=request_data,
                     timeout=5.0,
                 )
