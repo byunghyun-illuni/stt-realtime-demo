@@ -26,6 +26,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 외부 라이브러리 로그 레벨 조정
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 # 서버 시작 시간 기록
 server_start_time = time.time()
 
@@ -298,7 +302,14 @@ async def create_streaming_session(request: CreateSessionRequest = None):
     },
 )
 async def stream_stt_results(session_id: str):
-    """실시간 STT 결과 스트리밍 (Server-Sent Events)"""
+    """
+    실시간 STT 결과 스트리밍 (Server-Sent Events)
+
+    🎯 핵심 동작 원리:
+    1. StreamingResponse는 AsyncGenerator를 받아서 실시간 스트리밍 처리
+    2. generate_stream() 함수의 yield가 실행될 때마다 즉시 클라이언트로 전송
+    3. 연결은 계속 유지되며, 새로운 데이터가 있을 때마다 실시간 전송
+    """
     session = streaming_manager.get_session(session_id)
     if not session:
         raise HTTPException(
@@ -306,15 +317,29 @@ async def stream_stt_results(session_id: str):
         )
 
     async def generate_stream():
+        """
+        🌊 AsyncGenerator 함수 - 실시간 스트리밍의 핵심!
+
+        이 함수는 무한 루프를 돌면서:
+        1. 큐에서 새로운 이벤트를 기다림
+        2. 이벤트가 오면 yield로 즉시 클라이언트에게 전송
+        3. yield가 실행되는 순간 = 클라이언트가 데이터를 받는 순간
+        """
         async for chunk in streaming_manager.stream_results(session_id):
+            # 🚀 이 yield가 실행되는 순간 클라이언트로 즉시 전송됩니다!
+            # chunk는 "data: {...}\n\n" 형식의 SSE 데이터
             yield chunk
 
+    # 🎪 StreamingResponse의 마법:
+    # - generate_stream()을 호출하여 AsyncGenerator 생성
+    # - yield가 나올 때마다 HTTP 응답으로 즉시 전송
+    # - 연결을 keep-alive로 유지하여 실시간 스트리밍 구현
     return StreamingResponse(
-        generate_stream(),
-        media_type="text/event-stream",
+        generate_stream(),  # AsyncGenerator 함수
+        media_type="text/event-stream",  # SSE 형식
         headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
+            "Cache-Control": "no-cache",  # 캐시 방지
+            "Connection": "keep-alive",  # 연결 유지
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Cache-Control",
         },

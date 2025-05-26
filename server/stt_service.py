@@ -225,20 +225,31 @@ class STTService:
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 max_val = np.max(np.abs(audio_array)) if len(audio_array) > 0 else 0
 
-                # 오디오 전송 로그는 DEBUG로 변경
-                logger.debug(
-                    f"🎵 오디오 전송: {len(audio_data)} bytes, 최대값: {max_val}"
-                )
+                # 오디오 전송 카운터 (로그 빈도 조절용)
+                if not hasattr(self, "_audio_count"):
+                    self._audio_count = 0
+                self._audio_count += 1
 
-                # 음성이 있는지 간단 체크 (임계값 100) - 중요한 음성만 INFO로
-                if max_val > 1000:  # 임계값을 높여서 중요한 음성만 로깅
-                    logger.debug(f"🔊 음성 활동 감지: 진폭 {max_val}")
-                else:
-                    logger.debug(f"🔇 무음/저음량: 최대 진폭: {max_val}")
+                # 10번에 한 번만 로그 출력 (로그 스팸 방지)
+                if self._audio_count % 10 == 0:
+                    logger.debug(
+                        f"🎵 오디오 전송 #{self._audio_count}: {len(audio_data)} bytes, 최대값: {max_val}"
+                    )
+
+                # 음성이 있는지 간단 체크 (임계값 1000) - 중요한 음성만 로깅
+                if max_val > 2000 and self._audio_count % 20 == 0:  # 20번에 한 번만
+                    logger.debug(
+                        f"🔊 음성 활동 감지 #{self._audio_count}: 진폭 {max_val}"
+                    )
 
                 # 올바른 비동기 전송
                 await self.dg_connection.send(audio_data)
-                logger.debug(f"✅ 오디오 전송 완료: {len(audio_data)} bytes")
+
+                # 전송 완료 로그도 줄이기
+                if self._audio_count % 20 == 0:
+                    logger.debug(
+                        f"✅ 오디오 전송 완료 #{self._audio_count}: {len(audio_data)} bytes"
+                    )
             else:
                 logger.warning("⚠️ Deepgram 연결이 없습니다")
         except Exception as e:

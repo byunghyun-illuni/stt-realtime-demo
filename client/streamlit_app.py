@@ -19,6 +19,9 @@ import streamlit as st
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# httpx 로그 레벨 조정 - HTTP 요청 로그 줄이기
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 @dataclass
 class STTConfig:
@@ -242,14 +245,27 @@ class HTTPStreamingClient:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
+        # 오디오 업로드 카운터 (로그 빈도 조절용)
+        upload_count = 0
+
         try:
             while self.is_recording:
                 try:
                     if not self.audio_queue.empty():
                         audio_data = self.audio_queue.get()
+                        upload_count += 1
+
                         success = loop.run_until_complete(self.upload_audio(audio_data))
-                        if not success:
+
+                        # 10번에 한 번만 로그 출력
+                        if upload_count % 10 == 0:
+                            if success:
+                                logger.debug(f"✅ 오디오 업로드 #{upload_count} 성공")
+                            else:
+                                logger.warning(f"⚠️ 오디오 업로드 #{upload_count} 실패")
+                        elif not success:
                             logger.warning("⚠️ 오디오 업로드 실패")
+
                     time.sleep(0.01)  # 10ms 간격
                 except Exception as e:
                     logger.error(f"❌ 오디오 처리 오류: {e}")
@@ -557,11 +573,21 @@ def main():
     # 새로운 전사 결과 확인 및 처리
     queue_size = current_client.transcript_queue.qsize()
     if queue_size > 0:
-        logger.info(f"📦 큐에 {queue_size}개 메시지 대기중")
+        # 큐 크기가 5개 이상일 때만 로그 출력
+        if queue_size >= 5:
+            logger.info(f"📦 큐에 {queue_size}개 메시지 대기중")
 
+    processed_count = 0
     while not current_client.transcript_queue.empty():
         new_item = current_client.transcript_queue.get()
-        logger.info(f"📝 큐에서 메시지 처리: {new_item}")
+        processed_count += 1
+
+        # 중요한 메시지만 로그 출력
+        if new_item.get("type") in ["transcript_final", "error", "system"]:
+            logger.info(f"📝 큐에서 메시지 처리: {new_item}")
+        elif processed_count % 5 == 0:  # 실시간 토큰은 5개마다 한 번만
+            logger.debug(f"📝 실시간 토큰 처리 중... (#{processed_count})")
+
         st.session_state.transcripts.append(new_item)
 
     # 실시간 토큰 표시 (개선된 UI)

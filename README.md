@@ -11,7 +11,16 @@ Deepgram Nova-2 기반 실시간 음성 인식 서비스입니다. HTTP Server-S
 - ⚡ **실시간 처리**: 중간 결과 + 최종 결과
 - 🔄 **세션 기반**: 안정적인 세션 관리
 
-## 🚀 빠른 시작
+## 📚 클라이언트 개발자 가이드
+
+### 🚀 빠른 시작
+- **[5분 빠른 시작](QUICK_START.md)** - 바로 사용할 수 있는 예제 코드
+- **[상세 클라이언트 가이드](CLIENT_API_GUIDE.md)** - 완전한 사용법과 예제
+
+### 🔧 개발자용
+- **[내부 동작 원리](streaming_flow_explanation.md)** - HTTP 스트리밍 구조 설명
+
+## 🚀 서버 설정 및 실행
 
 ### 1. 환경 설정
 
@@ -48,11 +57,11 @@ streamlit run client/streamlit_app.py --server.port 8501
 
 ```javascript
 // 1. 세션 생성
-const session = await fetch('/sessions/create', { method: 'POST' });
+const session = await fetch('/sessions', { method: 'POST' });
 const { session_id, stream_url } = await session.json();
 
 // 2. 실시간 스트리밍 연결
-const eventSource = new EventSource(`/stream/stt/${session_id}`);
+const eventSource = new EventSource(`/sessions/${session_id}/stream`);
 eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.event_type === 'token') {
@@ -64,7 +73,7 @@ eventSource.onmessage = (event) => {
 
 // 3. 오디오 업로드
 const audioData = base64EncodeAudio(pcm16Buffer);
-await fetch(`/upload/audio/${session_id}`, {
+await fetch(`/sessions/${session_id}/audio`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audio_data: audioData })
@@ -95,6 +104,8 @@ stt-realtime-demo/
 │   └── streamlit_app.py   # Streamlit 웹 클라이언트
 ├── .vscode/               # VS Code 설정
 │   └── launch.json        # 디버그 설정
+├── CLIENT_API_GUIDE.md    # 📚 클라이언트 개발자 가이드
+├── QUICK_START.md         # ⚡ 5분 빠른 시작
 ├── requirements.txt       # Python 의존성
 ├── .env.example          # 환경변수 예시
 └── README.md             # 프로젝트 문서
@@ -103,17 +114,17 @@ stt-realtime-demo/
 ## 🔧 API 엔드포인트
 
 ### 세션 관리
-- `POST /sessions/create` - 새 세션 생성
+- `POST /sessions` - 새 세션 생성
 - `DELETE /sessions/{session_id}` - 세션 종료
 
 ### 스트리밍
-- `GET /stream/stt/{session_id}` - SSE 스트리밍 연결
-- `POST /upload/audio/{session_id}` - 오디오 업로드
+- `GET /sessions/{session_id}/stream` - SSE 스트리밍 연결
+- `POST /sessions/{session_id}/audio` - 오디오 업로드
 
 ### 시스템
 - `GET /health` - 헬스체크
 - `GET /info` - 서버 정보
-- `GET /stats` - 서비스 통계
+- `GET /usage` - 사용법 가이드
 - `GET /docs` - Swagger UI
 
 ## 🎯 지원 오디오 포맷
