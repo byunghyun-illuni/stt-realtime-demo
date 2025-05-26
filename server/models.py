@@ -24,7 +24,6 @@ class ServerInfo(BaseModel):
     endpoints: dict = Field(..., description="사용 가능한 엔드포인트")
     supported_formats: list[str] = Field(..., description="지원하는 오디오 포맷")
     features: list[str] = Field(..., description="서비스 기능")
-    websocket_url: str = Field(..., description="WebSocket 연결 URL")
 
 
 class STTConfig(BaseModel):
@@ -143,109 +142,7 @@ class StreamingTokenResponse(BaseModel):
     }
 
 
-# ===== WebSocket 메시지 모델 =====
-
-
-class AudioDataMessage(BaseModel):
-    """클라이언트에서 서버로 보내는 오디오 데이터"""
-
-    type: Literal["audio_data"] = Field(..., description="메시지 타입")
-    audio: str = Field(..., description="Base64 인코딩된 PCM16 오디오 데이터")
-    timestamp: Optional[float] = Field(None, description="클라이언트 타임스탬프")
-    chunk_id: Optional[str] = Field(None, description="청크 식별자")
-
-
-class ControlMessage(BaseModel):
-    """음성 인식 제어 메시지"""
-
-    type: Literal["start_transcription", "stop_transcription"] = Field(
-        ..., description="제어 타입"
-    )
-    config: Optional[STTConfig] = Field(None, description="STT 설정 (start시에만 사용)")
-
-
-class TranscriptResponse(BaseModel):
-    """서버에서 클라이언트로 보내는 전사 결과"""
-
-    type: Literal["transcript_interim", "transcript_final"] = Field(
-        ..., description="결과 타입"
-    )
-    text: str = Field(..., description="전사된 텍스트")
-    confidence: float = Field(..., description="신뢰도 점수 (0.0-1.0)", ge=0.0, le=1.0)
-    is_final: bool = Field(..., description="최종 결과 여부")
-    timestamp: float = Field(..., description="서버 타임스탬프")
-    chunk_id: Optional[str] = Field(None, description="관련 청크 식별자")
-
-
-class SpeechEventResponse(BaseModel):
-    """음성 감지 이벤트"""
-
-    type: Literal["speech_started", "utterance_end", "vad_event"] = Field(
-        ..., description="이벤트 타입"
-    )
-    timestamp: float = Field(..., description="이벤트 발생 시간")
-    message: Optional[str] = Field(None, description="이벤트 메시지")
-
-
-class ConnectionResponse(BaseModel):
-    """연결 상태 응답"""
-
-    type: Literal["connection"] = Field(..., description="메시지 타입")
-    status: Literal["connected", "disconnected", "error"] = Field(
-        ..., description="연결 상태"
-    )
-    message: str = Field(..., description="상태 메시지")
-    timestamp: float = Field(..., description="응답 시간")
-
-
-class ErrorResponse(BaseModel):
-    """에러 응답"""
-
-    type: Literal["error"] = Field(..., description="메시지 타입")
-    code: str = Field(..., description="에러 코드", example="AUDIO_FORMAT_ERROR")
-    message: str = Field(..., description="에러 메시지")
-    details: Optional[dict] = Field(None, description="에러 상세 정보")
-    retry_after: Optional[int] = Field(None, description="재시도 권장 시간(초)")
-
-
 # ===== API 사용 예시 모델 =====
-
-
-class WebSocketUsageExample(BaseModel):
-    """WebSocket 사용 예시"""
-
-    connection_url: str = Field(..., description="WebSocket 연결 URL")
-    message_examples: dict = Field(..., description="메시지 예시들")
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "connection_url": "ws://localhost:8001/ws/stt",
-                "message_examples": {
-                    "send_audio": {
-                        "type": "audio_data",
-                        "audio": "base64_encoded_pcm16_data...",
-                        "timestamp": 1704067200.123,
-                    },
-                    "start_transcription": {
-                        "type": "start_transcription",
-                        "config": {
-                            "model": "nova-2",
-                            "language": "ko",
-                            "interim_results": True,
-                        },
-                    },
-                    "receive_transcript": {
-                        "type": "transcript_final",
-                        "text": "안녕하세요, 실시간 음성 인식입니다.",
-                        "confidence": 0.95,
-                        "is_final": True,
-                        "timestamp": 1704067201.456,
-                    },
-                },
-            }
-        }
-    }
 
 
 class StreamingUsageExample(BaseModel):
@@ -292,17 +189,3 @@ class StreamingUsageExample(BaseModel):
             }
         }
     }
-
-
-# ===== 통계 및 모니터링 모델 =====
-
-
-class STTStats(BaseModel):
-    """STT 서비스 통계"""
-
-    active_connections: int = Field(..., description="현재 활성 연결 수")
-    active_sessions: int = Field(..., description="현재 활성 세션 수")
-    total_transcriptions: int = Field(..., description="총 전사 완료 수")
-    average_confidence: float = Field(..., description="평균 신뢰도")
-    uptime_seconds: float = Field(..., description="서버 가동 시간(초)")
-    supported_languages: list[str] = Field(..., description="지원 언어 목록")

@@ -14,7 +14,6 @@ import numpy as np
 import requests
 import sounddevice as sd
 import streamlit as st
-import websockets
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -333,252 +332,10 @@ class HTTPStreamingClient:
             self.session_info = None
 
 
-class WebSocketClient:
-    """기존 WebSocket 기반 STT 클라이언트 (기존 코드 유지)"""
-
-    def __init__(self, server_url="ws://localhost:8001/ws/stt"):
-        self.server_url = server_url
-        self.websocket = None
-        self.audio_queue = queue.Queue()
-        self.transcript_queue = queue.Queue()
-        self.is_recording = False
-        self.is_connected = False
-        self.audio_thread = None
-        self.websocket_thread = None
-        self.connection_event = threading.Event()
-
-        # 오디오 설정 - Deepgram 권장 설정
-        self.CHANNELS = 1
-        self.RATE = 16000  # Deepgram 권장: 16kHz
-        self.CHUNK = 1024
-        self.DTYPE = np.int16
-
-    def connect(self):
-        """서버에 WebSocket 연결"""
-        try:
-            # 웹소켓 연결을 별도 스레드에서 실행
-            self.websocket_thread = threading.Thread(
-                target=self.run_websocket_connection, daemon=True
-            )
-            self.websocket_thread.start()
-
-            # 연결 완료까지 대기 (최대 5초)
-            if self.connection_event.wait(timeout=5.0):
-                return True
-            else:
-                logger.error("연결 타임아웃")
-                return False
-
-        except Exception as e:
-            logger.error(f"서버 연결 실패: {e}")
-            return False
-
-    def run_websocket_connection(self):
-        """웹소켓 연결과 메시지 수신을 별도 스레드에서 실행"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            loop.run_until_complete(self.websocket_handler())
-        except Exception as e:
-            logger.error(f"웹소켓 연결 오류: {e}")
-        finally:
-            loop.close()
-
-    async def websocket_handler(self):
-        """웹소켓 연결 및 메시지 처리"""
-        try:
-            # 웹소켓 연결
-            self.websocket = await websockets.connect(self.server_url)
-            self.is_connected = True
-            self.connection_event.set()  # 연결 완료 신호
-
-            # 메시지 수신 루프
-            await self.listen_messages()
-
-        except Exception as e:
-            logger.error(f"웹소켓 핸들러 오류: {e}")
-            self.is_connected = False
-        finally:
-            if self.websocket:
-                await self.websocket.close()
-            self.websocket = None
-            self.is_connected = False
-
-    def disconnect(self):
-        """서버 연결 해제"""
-        self.is_connected = False
-        self.connection_event.clear()
-
-        # 웹소켓 스레드 종료 대기
-        if self.websocket_thread and self.websocket_thread.is_alive():
-            self.websocket_thread.join(timeout=2.0)
-
-    async def listen_messages(self):
-        """서버로부터 메시지 수신"""
-        try:
-            async for message in self.websocket:
-                logger.info(f"📨 WebSocket 메시지 수신: {message[:100]}...")
-                data = json.loads(message)
-                logger.info(f"📋 메시지 타입: {data.get('type')}")
-
-                # Deepgram 최종 전사 결과
-                if data.get("type") == "transcript_final":
-                    transcript = data.get("text", "")
-                    confidence = data.get("confidence", 0)
-                    logger.info(
-                        f"✅ 최종 전사: {transcript} (신뢰도: {confidence:.2f})"
-                    )
-                    self.transcript_queue.put(
-                        {
-                            "type": "transcript_final",
-                            "text": transcript,
-                            "confidence": confidence,
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        }
-                    )
-
-                # Deepgram 실시간 중간 전사 결과
-                elif data.get("type") == "transcript_interim":
-                    transcript = data.get("text", "")
-                    confidence = data.get("confidence", 0)
-                    logger.info(
-                        f"⚡ 실시간 전사: {transcript} (신뢰도: {confidence:.2f})"
-                    )
-                    self.transcript_queue.put(
-                        {
-                            "type": "transcript_interim",
-                            "text": transcript,
-                            "confidence": confidence,
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        }
-                    )
-
-                # 음성 감지 시작
-                elif data.get("type") == "speech_started":
-                    self.transcript_queue.put(
-                        {
-                            "type": "event",
-                            "text": "🎤 음성 감지됨...",
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        }
-                    )
-
-                # 발화 종료
-                elif data.get("type") == "utterance_end":
-                    self.transcript_queue.put(
-                        {
-                            "type": "event",
-                            "text": "⏸️ 발화 종료",
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        }
-                    )
-
-                # 연결 상태
-                elif data.get("type") == "connection":
-                    if data.get("status") == "connected":
-                        message = data.get("message", "서버 연결 완료")
-                        self.transcript_queue.put(
-                            {
-                                "type": "system",
-                                "text": f"✅ {message}",
-                                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                            }
-                        )
-
-                # 에러 처리
-                elif data.get("type") == "error":
-                    error_msg = data.get("message", "Unknown error")
-                    self.transcript_queue.put(
-                        {
-                            "type": "error",
-                            "text": f"❌ 오류: {error_msg}",
-                            "timestamp": datetime.now().strftime("%H:%M:%S"),
-                        }
-                    )
-
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("WebSocket 연결 종료")
-        except Exception as e:
-            logger.error(f"메시지 수신 오류: {e}")
-            import traceback
-
-            logger.error(f"상세 오류: {traceback.format_exc()}")
-
-    def audio_callback(self, indata, frames, time, status):
-        """sounddevice 오디오 콜백"""
-        if status:
-            logger.warning(f"Audio callback status: {status}")
-
-        if self.is_recording:
-            # numpy array를 bytes로 변환
-            audio_bytes = indata.astype(self.DTYPE).tobytes()
-            self.audio_queue.put(audio_bytes)
-
-    def send_audio_data_sync(self):
-        """오디오 데이터를 서버로 전송"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        try:
-            while self.is_recording and self.websocket:
-                try:
-                    if not self.audio_queue.empty():
-                        audio_data = self.audio_queue.get()
-                        audio_base64 = base64.b64encode(audio_data).decode("utf-8")
-                        message = {"type": "audio_data", "audio": audio_base64}
-                        loop.run_until_complete(
-                            self.websocket.send(json.dumps(message))
-                        )
-                    time.sleep(0.01)  # 10ms 간격
-                except Exception as e:
-                    logger.error(f"오디오 전송 오류: {e}")
-                    break
-        finally:
-            loop.close()
-
-    def start_recording(self):
-        """녹음 시작"""
-        try:
-            self.stream = sd.InputStream(
-                samplerate=self.RATE,
-                channels=self.CHANNELS,
-                dtype=self.DTYPE,
-                blocksize=self.CHUNK,
-                callback=self.audio_callback,
-            )
-
-            self.is_recording = True
-            self.stream.start()
-
-            # 오디오 전송을 별도 스레드에서 실행
-            self.audio_thread = threading.Thread(
-                target=self.send_audio_data_sync, daemon=True
-            )
-            self.audio_thread.start()
-            return True
-
-        except Exception as e:
-            logger.error(f"녹음 시작 실패: {e}")
-            return False
-
-    def stop_recording(self):
-        """녹음 중지"""
-        self.is_recording = False
-
-        if hasattr(self, "stream") and self.stream:
-            self.stream.stop()
-            self.stream.close()
-
-        # 오디오 스레드 종료 대기
-        if self.audio_thread and self.audio_thread.is_alive():
-            self.audio_thread.join(timeout=1.0)
-
-
 # Streamlit UI
 def main():
     st.set_page_config(
-        page_title="🎤 실시간 STT 클라이언트 (WebSocket + HTTP Streaming)",
+        page_title="🎤 실시간 STT 클라이언트 (HTTP 스트리밍)",
         page_icon="🎤",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -609,19 +366,6 @@ def main():
         color: #666;
         font-size: 1.1rem;
         margin-bottom: 2rem;
-    }
-    
-    .method-card {
-        padding: 15px;
-        border-radius: 10px;
-        border: 2px solid #e0e0e0;
-        margin: 10px 0;
-        transition: all 0.3s ease;
-    }
-    
-    .method-card.selected {
-        border-color: #4285f4;
-        background-color: #f0f8ff;
     }
     
     .streaming-box {
@@ -687,113 +431,34 @@ def main():
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<p class="subtitle">Deepgram Nova-2 기반 | WebSocket + HTTP 스트리밍 지원</p>',
+        '<p class="subtitle">Deepgram Nova-2 기반 | HTTP 스트리밍 방식</p>',
         unsafe_allow_html=True,
     )
 
     # 세션 상태 초기화
-    if "communication_method" not in st.session_state:
-        st.session_state.communication_method = "http_streaming"
-
-    if "websocket_client" not in st.session_state:
-        st.session_state.websocket_client = WebSocketClient()
-
     if "http_client" not in st.session_state:
         st.session_state.http_client = HTTPStreamingClient()
 
     if "transcripts" not in st.session_state:
         st.session_state.transcripts = []
 
-    # 통신 방식 선택
-    st.markdown("## 🔄 통신 방식 선택")
-
-    col_method1, col_method2 = st.columns(2)
-
-    with col_method1:
-        if st.button(
-            "🌊 HTTP 스트리밍 (SSE)",
-            key="http_method",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state.communication_method == "http_streaming"
-                else "secondary"
-            ),
-        ):
-            st.session_state.communication_method = "http_streaming"
-            st.rerun()
-
-        st.markdown(
-            """
-        **특징:**
-        - Server-Sent Events 기반
-        - 토큰 단위 실시간 스트리밍 
-        - 세션 기반 관리
-        - HTTP 표준 프로토콜
-        """
-        )
-
-    with col_method2:
-        if st.button(
-            "🔌 WebSocket",
-            key="ws_method",
-            use_container_width=True,
-            type=(
-                "primary"
-                if st.session_state.communication_method == "websocket"
-                else "secondary"
-            ),
-        ):
-            st.session_state.communication_method = "websocket"
-            st.rerun()
-
-        st.markdown(
-            """
-        **특징:**
-        - 양방향 실시간 통신
-        - 낮은 지연시간
-        - 연결 지속성
-        - 기존 WebSocket 방식
-        """
-        )
-
-    st.markdown("---")
-
-    # 현재 선택된 방식에 따른 클라이언트 선택
-    if st.session_state.communication_method == "http_streaming":
-        current_client = st.session_state.http_client
-        method_name = "HTTP 스트리밍"
-        method_icon = "🌊"
-    else:
-        current_client = st.session_state.websocket_client
-        method_name = "WebSocket"
-        method_icon = "🔌"
+    current_client = st.session_state.http_client
 
     # 현재 방식 표시
-    st.markdown(f"### {method_icon} {method_name} 모드")
+    st.markdown("### 🌊 HTTP 스트리밍 모드")
 
     # 상태 정보 표시
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        if st.session_state.communication_method == "http_streaming":
-            status = "🟢 세션 활성" if current_client.session_id else "🔴 세션 없음"
-            st.metric("세션 상태", status)
-        else:
-            status = "🟢 연결됨" if current_client.is_connected else "🔴 연결 안됨"
-            st.metric("연결 상태", status)
+        status = "🟢 세션 활성" if current_client.session_id else "🔴 세션 없음"
+        st.metric("세션 상태", status)
 
     with col2:
-        if st.session_state.communication_method == "http_streaming":
-            streaming_status = (
-                "🌊 스트리밍 중" if current_client.is_streaming else "⚪ 대기 중"
-            )
-            st.metric("스트리밍 상태", streaming_status)
-        else:
-            recording_status = (
-                "🔴 녹음 중" if current_client.is_recording else "⚪ 대기 중"
-            )
-            st.metric("녹음 상태", recording_status)
+        streaming_status = (
+            "🌊 스트리밍 중" if current_client.is_streaming else "⚪ 대기 중"
+        )
+        st.metric("스트리밍 상태", streaming_status)
 
     with col3:
         recording_status = "🔴 녹음 중" if current_client.is_recording else "⚪ 대기 중"
@@ -802,11 +467,8 @@ def main():
     with col4:
         st.metric("인식 결과", f"{len(st.session_state.transcripts)}개")
 
-    # 세션 정보 (HTTP 스트리밍일 때만)
-    if (
-        st.session_state.communication_method == "http_streaming"
-        and current_client.session_id
-    ):
+    # 세션 정보
+    if current_client.session_id:
         st.markdown("### 📋 세션 정보")
         session_info_col1, session_info_col2 = st.columns(2)
 
@@ -820,85 +482,49 @@ def main():
                 )
 
     # 연결/세션 관리
-    st.markdown("### 🔗 연결/세션 관리")
+    st.markdown("### 🔗 세션 관리")
 
-    if st.session_state.communication_method == "http_streaming":
-        col_connect1, col_connect2 = st.columns(2)
+    col_connect1, col_connect2 = st.columns(2)
 
-        with col_connect1:
-            if st.button(
-                "🌊 세션 생성 & 스트리밍 시작",
-                disabled=bool(current_client.session_id),
-                use_container_width=True,
-            ):
+    with col_connect1:
+        if st.button(
+            "🌊 세션 생성 & 스트리밍 시작",
+            disabled=bool(current_client.session_id),
+            use_container_width=True,
+        ):
 
-                async def create_and_start():
-                    config = STTConfig(language="ko", interim_results=True)
-                    if await current_client.create_session(config):
-                        if current_client.start_streaming():
-                            st.success("✅ 세션 생성 및 스트리밍 시작 성공!")
-                        else:
-                            st.error("❌ 스트리밍 시작 실패")
+            async def create_and_start():
+                config = STTConfig(language="ko", interim_results=True)
+                if await current_client.create_session(config):
+                    if current_client.start_streaming():
+                        st.success("✅ 세션 생성 및 스트리밍 시작 성공!")
                     else:
-                        st.error("❌ 세션 생성 실패")
-
-                import asyncio
-
-                asyncio.run(create_and_start())
-                time.sleep(0.5)
-                st.rerun()
-
-        with col_connect2:
-            if st.button(
-                "🗑️ 세션 종료",
-                disabled=not bool(current_client.session_id),
-                use_container_width=True,
-            ):
-
-                async def close_session():
-                    await current_client.close_session()
-                    st.success("✅ 세션 종료됨")
-
-                asyncio.run(close_session())
-                st.rerun()
-
-    else:
-        # WebSocket 연결 관리
-        col_connect1, col_connect2 = st.columns(2)
-
-        with col_connect1:
-            if st.button(
-                "🔌 WebSocket 연결",
-                disabled=current_client.is_connected,
-                use_container_width=True,
-            ):
-                if current_client.connect():
-                    st.success("✅ WebSocket 연결 성공!")
-                    time.sleep(0.5)
-                    st.rerun()
+                        st.error("❌ 스트리밍 시작 실패")
                 else:
-                    st.error("❌ WebSocket 연결 실패!")
+                    st.error("❌ 세션 생성 실패")
 
-        with col_connect2:
-            if st.button(
-                "🔌 연결 해제",
-                disabled=not current_client.is_connected,
-                use_container_width=True,
-            ):
-                current_client.stop_recording()
-                current_client.disconnect()
-                st.success("✅ 연결 해제됨")
-                st.rerun()
+            import asyncio
+
+            asyncio.run(create_and_start())
+            time.sleep(0.5)
+            st.rerun()
+
+    with col_connect2:
+        if st.button(
+            "🗑️ 세션 종료",
+            disabled=not bool(current_client.session_id),
+            use_container_width=True,
+        ):
+
+            async def close_session():
+                await current_client.close_session()
+                st.success("✅ 세션 종료됨")
+
+            asyncio.run(close_session())
+            st.rerun()
 
     # 녹음 컨트롤
-    connection_ready = (
-        st.session_state.communication_method == "http_streaming"
-        and current_client.session_id
-        and current_client.is_streaming
-    ) or (
-        st.session_state.communication_method == "websocket"
-        and current_client.is_connected
-    )
+    connection_ready = current_client.session_id and current_client.is_streaming
 
     if connection_ready:
         st.markdown("### 🎙️ 음성 녹음")
@@ -926,7 +552,7 @@ def main():
                 st.success("⏹️ 녹음 중지됨")
                 st.rerun()
     else:
-        st.warning("먼저 연결/세션을 생성해주세요.")
+        st.warning("먼저 세션을 생성해주세요.")
 
     # 새로운 전사 결과 확인 및 처리
     queue_size = current_client.transcript_queue.qsize()
@@ -961,7 +587,7 @@ def main():
                             {text}<span style="animation: blink 1s infinite;">│</span>
                         </div>
                         <div style="font-size: 0.9rem; opacity: 0.8;">
-                            신뢰도: {confidence:.2f} | {method_name} 실시간 스트리밍
+                            신뢰도: {confidence:.2f} | HTTP 스트리밍 실시간
                         </div>
                     </div>
                 </div>
@@ -1018,7 +644,7 @@ def main():
                         <div style="color: #666; font-size: 12px;">
                             <span style="margin-right: 15px;">🕒 {timestamp}</span>
                             <span style="margin-right: 15px;">📊 신뢰도: {confidence:.2f}</span>
-                            <span>🔧 {method_name}</span>
+                            <span>🌊 HTTP 스트리밍</span>
                         </div>
                     </div>
                     """,
@@ -1105,30 +731,17 @@ def main():
     with st.sidebar:
         st.markdown("## 📋 사용법")
 
-        if st.session_state.communication_method == "http_streaming":
-            st.markdown(
-                """
-            ### 🌊 HTTP 스트리밍 방식
-            1. **세션 생성**: '세션 생성 & 스트리밍 시작' 클릭
-            2. **녹음 시작**: '🔴 녹음 시작' 클릭
-            3. **음성 입력**: 마이크에 대고 말하기
-            4. **실시간 확인**: 토큰 단위로 결과 확인
-            5. **녹음 중지**: '⏹️ 녹음 중지' 클릭
-            6. **세션 종료**: '🗑️ 세션 종료' 클릭
+        st.markdown(
             """
-            )
-        else:
-            st.markdown(
-                """
-            ### 🔌 WebSocket 방식
-            1. **연결**: 'WebSocket 연결' 클릭
-            2. **녹음 시작**: '🔴 녹음 시작' 클릭
-            3. **음성 입력**: 마이크에 대고 말하기
-            4. **결과 확인**: 실시간으로 전사 결과 확인
-            5. **녹음 중지**: '⏹️ 녹음 중지' 클릭
-            6. **연결 해제**: '연결 해제' 클릭
-            """
-            )
+        ### 🌊 HTTP 스트리밍 방식
+        1. **세션 생성**: '세션 생성 & 스트리밍 시작' 클릭
+        2. **녹음 시작**: '🔴 녹음 시작' 클릭
+        3. **음성 입력**: 마이크에 대고 말하기
+        4. **실시간 확인**: 토큰 단위로 결과 확인
+        5. **녹음 중지**: '⏹️ 녹음 중지' 클릭
+        6. **세션 종료**: '🗑️ 세션 종료' 클릭
+        """
+        )
 
         st.markdown("## ⚙️ 서버 정보")
         st.markdown(

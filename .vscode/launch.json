@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "FastAPI 서버 (HTTP 스트리밍)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "server.main:app",
+                "--reload",
+                "--port",
+                "8001"
+            ],
+            "console": "integratedTerminal",
+            "python": ".venv/bin/python",
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Streamlit 클라이언트 (HTTP 스트리밍)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "client/streamlit_app.py",
+                "--server.port",
+                "8501"
+            ],
+            "console": "integratedTerminal",
+            "python": ".venv/bin/python",
+            "envFile": "${workspaceFolder}/.env"
+        }
+    ]
+}

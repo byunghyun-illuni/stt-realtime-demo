@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 
@@ -17,11 +17,8 @@ from .models import (
     ServerInfo,
     StreamingUsageExample,
     STTConfig,
-    STTStats,
-    WebSocketUsageExample,
 )
 from .streaming_manager import streaming_manager
-from .stt_service import STTService
 
 # 로깅 설정
 logging.basicConfig(
@@ -32,33 +29,6 @@ logger = logging.getLogger(__name__)
 # 서버 시작 시간 기록
 server_start_time = time.time()
 
-# 통계 데이터 저장
-stats = {
-    "total_connections": 0,
-    "active_connections": 0,
-    "total_transcriptions": 0,
-    "confidence_scores": [],
-}
-
-
-def stats_callback(event_type: str, data: dict):
-    """STT 서비스 통계 업데이트 콜백"""
-    if event_type == "transcription_completed":
-        stats["total_transcriptions"] += 1
-        confidence = data.get("confidence", 0)
-        if confidence > 0:
-            stats["confidence_scores"].append(confidence)
-            # 최근 100개만 유지
-            if len(stats["confidence_scores"]) > 100:
-                stats["confidence_scores"] = stats["confidence_scores"][-100:]
-        logger.info(
-            f"📊 통계 업데이트: 전사 {stats['total_transcriptions']}회, 신뢰도 {confidence:.2f}"
-        )
-
-
-# STT 서비스 인스턴스 생성 (통계 콜백 포함)
-stt_service = STTService(stats_callback=stats_callback)
-
 # FastAPI 앱 생성
 app = FastAPI(
     title="🎤 실시간 STT API",
@@ -66,21 +36,15 @@ app = FastAPI(
     ## Deepgram Nova-2 기반 실시간 음성 인식 API
     
     **주요 기능:**
-    - 🚀 **실시간 WebSocket 스트리밍**: 저지연 음성 인식
     - 🌊 **HTTP 스트리밍**: Server-Sent Events로 토큰 단위 실시간 전사
     - 🧠 **Deepgram Nova-2**: 최신 AI 모델 사용
     - 🌍 **다국어 지원**: 한국어 우선, 영어 등 다양한 언어
     - 📊 **신뢰도 점수**: 각 전사 결과의 정확도 제공
     - ⚡ **실시간 스트림**: 중간 결과 + 최종 결과
     
-    **사용 방법 (2가지):**
+    **사용 방법:**
     
-    ### 1. WebSocket 방식 (양방향 실시간)
-    1. WebSocket으로 `/ws/stt`에 연결
-    2. Base64 인코딩된 PCM16 오디오 데이터 전송
-    3. 실시간으로 전사 결과 수신
-    
-    ### 2. HTTP 스트리밍 방식 (토큰 단위)
+    ### HTTP 스트리밍 방식 (토큰 단위)
     1. POST `/sessions/create`로 세션 생성
     2. GET `/stream/stt/{session_id}`로 Server-Sent Events 연결
     3. POST `/upload/audio/{session_id}`로 오디오 업로드
@@ -92,14 +56,13 @@ app = FastAPI(
     - 채널: 모노 (1채널)
     
     **개발자 참고:**
-    - WebSocket 연결 URL: `ws://localhost:8001/ws/stt`
     - 메시지 프로토콜: JSON 형태
     - 실시간 중간 결과와 최종 결과 구분 제공
     - HTTP 스트리밍: 세션 기반 토큰 단위 스트리밍
     """,
     version="2.0.0",
     contact={
-        "name": "STT API 지원팀",
+        "name": "illuni",
         "email": "byunghyun@illuni.com",
     },
     license_info={
@@ -161,15 +124,10 @@ async def root():
                 • <a href="/openapi.json" class="btn">🔧 OpenAPI Schema</a>
             </div>
             
-            <h2>🚀 두 가지 사용 방법</h2>
-            
-            <div class="info">
-                <strong>1. WebSocket 방식 (양방향 실시간):</strong><br>
-                <div class="code">ws://localhost:8001/ws/stt</div>
-            </div>
+            <h2>🌊 HTTP 스트리밍 방식</h2>
             
             <div class="streaming">
-                <strong>2. 🌊 HTTP 스트리밍 방식 (토큰 단위):</strong><br>
+                <strong>🌊 HTTP 스트리밍 방식 (토큰 단위):</strong><br>
                 <a href="/streaming-example" class="btn secondary">🎯 스트리밍 가이드</a>
                 <a href="/usage-streaming" class="btn secondary">📖 사용법 예시</a>
             </div>
@@ -250,16 +208,12 @@ async def get_server_info():
         endpoints={
             "health": "/health",
             "info": "/info",
-            "stats": "/stats",
-            "websocket": "/ws/stt",
             "docs": "/docs",
-            "usage": "/usage",
             "create_session": "/sessions/create",
             "stream_stt": "/stream/stt/{session_id}",
             "upload_audio": "/upload/audio/{session_id}",
             "usage_streaming": "/usage-streaming",
         },
-        websocket_url="ws://localhost:8001/ws/stt",
         supported_formats=["pcm16"],
         features=[
             "실시간 음성 인식",
@@ -267,93 +221,10 @@ async def get_server_info():
             "음성 감지",
             "신뢰도 점수",
             "다국어 지원",
-            "WebSocket 스트리밍",
             "HTTP Server-Sent Events 스트리밍",
             "세션 기반 토큰 단위 스트리밍",
             "Deepgram Nova-2 모델",
         ],
-    )
-
-
-@app.get(
-    "/stats",
-    response_model=STTStats,
-    summary="서비스 통계",
-    description="실시간 STT 서비스의 사용 통계와 성능 지표를 확인합니다.",
-    tags=["Monitoring"],
-)
-async def get_stats():
-    """서비스 통계 조회"""
-    avg_confidence = (
-        sum(stats["confidence_scores"]) / len(stats["confidence_scores"])
-        if stats["confidence_scores"]
-        else 0.0
-    )
-
-    return STTStats(
-        active_connections=stats["active_connections"],
-        active_sessions=streaming_manager.get_active_sessions_count(),
-        total_transcriptions=stats["total_transcriptions"],
-        average_confidence=round(avg_confidence, 3),
-        uptime_seconds=round(time.time() - server_start_time, 1),
-        supported_languages=["ko", "en", "ja", "zh", "es", "fr", "de"],
-    )
-
-
-@app.get(
-    "/usage",
-    response_model=WebSocketUsageExample,
-    summary="WebSocket 사용법",
-    description="WebSocket을 통한 실시간 STT 사용법과 메시지 예시를 제공합니다.",
-    tags=["Documentation"],
-)
-async def get_usage_guide():
-    """WebSocket API 사용법 가이드"""
-    return WebSocketUsageExample(
-        connection_url="ws://localhost:8001/ws/stt",
-        message_examples={
-            "1_connect": {
-                "description": "WebSocket 연결 후 자동으로 연결 상태 메시지 수신"
-            },
-            "2_send_audio": {
-                "type": "audio_data",
-                "audio": "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=",
-                "timestamp": 1704067200.123,
-                "description": "Base64로 인코딩된 PCM16 오디오 데이터 전송",
-            },
-            "3_receive_interim": {
-                "type": "transcript_interim",
-                "text": "안녕하",
-                "confidence": 0.78,
-                "is_final": False,
-                "timestamp": 1704067200.456,
-                "description": "실시간 중간 전사 결과 수신",
-            },
-            "4_receive_final": {
-                "type": "transcript_final",
-                "text": "안녕하세요, 실시간 음성 인식입니다.",
-                "confidence": 0.95,
-                "is_final": True,
-                "timestamp": 1704067201.789,
-                "description": "최종 확정된 전사 결과 수신",
-            },
-            "5_speech_events": {
-                "type": "speech_started",
-                "timestamp": 1704067200.100,
-                "message": "음성 감지됨",
-                "description": "음성 활동 감지 이벤트",
-            },
-            "6_control_messages": {
-                "type": "start_transcription",
-                "config": {
-                    "model": "nova-2",
-                    "language": "ko",
-                    "interim_results": True,
-                    "sample_rate": 16000,
-                },
-                "description": "음성 인식 시작/설정 (선택사항)",
-            },
-        },
     )
 
 
@@ -566,79 +437,12 @@ async def get_streaming_usage_guide():
     )
 
 
-@app.websocket("/ws/stt")
-async def websocket_stt_endpoint(websocket: WebSocket):
-    """
-    ## 🎤 실시간 STT WebSocket 엔드포인트
-
-    **실시간 음성 인식을 위한 WebSocket 연결**
-
-    ### 연결 방법:
-    ```javascript
-    const ws = new WebSocket('ws://localhost:8001/ws/stt');
-    ```
-
-    ### 전송 메시지 형식:
-    ```json
-    {
-        "type": "audio_data",
-        "audio": "base64_encoded_pcm16_data",
-        "timestamp": 1704067200.123
-    }
-    ```
-
-    ### 수신 메시지 형식:
-    ```json
-    {
-        "type": "transcript_final",
-        "text": "인식된 텍스트",
-        "confidence": 0.95,
-        "is_final": true,
-        "timestamp": 1704067201.456
-    }
-    ```
-
-    ### 지원 오디오 포맷:
-    - **포맷**: PCM16
-    - **샘플링 레이트**: 16kHz (권장)
-    - **채널**: 모노 (1채널)
-    - **인코딩**: Base64
-
-    ### 실시간 응답:
-    - `transcript_interim`: 실시간 중간 결과
-    - `transcript_final`: 최종 확정 결과
-    - `speech_started`: 음성 감지 시작
-    - `utterance_end`: 발화 종료
-    """
-    await websocket.accept()
-
-    # 통계 업데이트
-    stats["total_connections"] += 1
-    stats["active_connections"] += 1
-
-    logger.info(f"🔗 새로운 WebSocket 연결 (총 {stats['total_connections']}번째)")
-
-    try:
-        # STTService에서 WebSocket 연결 처리
-        await stt_service.handle_websocket_connection(websocket)
-
-    except WebSocketDisconnect:
-        logger.info("📱 클라이언트 연결 해제")
-    except Exception as e:
-        logger.error(f"❌ WebSocket 오류: {e}")
-    finally:
-        # 통계 업데이트
-        stats["active_connections"] = max(0, stats["active_connections"] - 1)
-        logger.info(f"🧹 연결 정리 완료 (활성 연결: {stats['active_connections']}개)")
-
-
 # FastAPI 이벤트 핸들러
 @app.on_event("startup")
 async def startup_event():
     """서버 시작 시 실행"""
     logger.info("🚀 FastAPI STT Server 시작")
     logger.info("📖 API 문서: http://localhost:8001/docs")
-    logger.info("🔌 WebSocket: ws://localhost:8001/ws/stt")
     logger.info("🌊 HTTP 스트리밍: http://localhost:8001/sessions/create")
 
     # 스트리밍 매니저 정리 태스크 시작

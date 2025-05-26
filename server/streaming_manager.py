@@ -70,69 +70,14 @@ class StreamingSessionManager:
         # 세션별 큐 생성
         self.session_queues[session_id] = asyncio.Queue()
 
-        # 세션별 STT 서비스 생성 (콜백 포함)
-        def session_callback(event_type: str, data: dict):
-            """세션별 STT 이벤트 콜백"""
-            asyncio.create_task(self._handle_stt_event(session_id, event_type, data))
-
-        stt_service = STTService(stats_callback=session_callback)
+        # 세션별 STT 서비스 생성
+        stt_service = STTService()
         self.session_stt_services[session_id] = stt_service
 
         self.sessions[session_id] = session
 
         logger.info(f"✅ 새 스트리밍 세션 생성: {session_id}")
         return session_id
-
-    async def _handle_stt_event(self, session_id: str, event_type: str, data: dict):
-        """STT 이벤트를 스트리밍 큐로 전달"""
-        if session_id not in self.session_queues:
-            return
-
-        try:
-            # STT 이벤트를 스트리밍 응답으로 변환
-            if event_type == "transcription_interim":
-                streaming_event = StreamingTokenResponse(
-                    event_type="token",
-                    data={
-                        "text": data.get("text", ""),
-                        "confidence": data.get("confidence", 0),
-                        "is_partial": True,
-                    },
-                    timestamp=time.time(),
-                    session_id=session_id,
-                )
-            elif event_type == "transcription_final":
-                streaming_event = StreamingTokenResponse(
-                    event_type="final",
-                    data={
-                        "text": data.get("text", ""),
-                        "confidence": data.get("confidence", 0),
-                        "is_partial": False,
-                    },
-                    timestamp=time.time(),
-                    session_id=session_id,
-                )
-            elif event_type == "speech_started":
-                streaming_event = StreamingTokenResponse(
-                    event_type="speech_start",
-                    data={"message": "음성 감지됨"},
-                    timestamp=time.time(),
-                    session_id=session_id,
-                )
-            elif event_type == "utterance_end":
-                streaming_event = StreamingTokenResponse(
-                    event_type="speech_end",
-                    data={"message": "발화 종료"},
-                    timestamp=time.time(),
-                    session_id=session_id,
-                )
-            else:
-                return
-
-            await self.session_queues[session_id].put(streaming_event)
-
-        except Exception as e:
-            logger.error(f"❌ STT 이벤트 처리 오류 ({session_id}): {e}")
 
     async def upload_audio(self, session_id: str, audio_data: bytes) -> bool:
         """세션에 오디오 데이터 업로드"""
@@ -277,14 +222,19 @@ class VirtualWebSocket:
     def __init__(self, session_id: str, event_queue: asyncio.Queue):
         self.session_id = session_id
         self.event_queue = event_queue
+        logger.info(f"🔗 VirtualWebSocket 생성됨: {session_id}")
 
     async def send_text(self, message: str):
         """STT 결과를 큐로 전달"""
         try:
+            logger.info(
+                f"📨 VirtualWebSocket 메시지 수신 ({self.session_id}): {message}"
+            )
             data = json.loads(message)
 
             # Deepgram 결과를 스트리밍 이벤트로 변환
             if data.get("type") == "transcript_interim":
+                logger.info(f"⚡ 실시간 토큰 처리 중: {data.get('text', '')}")
                 event = StreamingTokenResponse(
                     event_type="token",
                     data={
@@ -296,8 +246,10 @@ class VirtualWebSocket:
                     session_id=self.session_id,
                 )
                 await self.event_queue.put(event)
+                logger.info(f"✅ 실시간 토큰 큐에 추가됨: {data.get('text', '')}")
 
             elif data.get("type") == "transcript_final":
+                logger.info(f"✅ 최종 결과 처리 중: {data.get('text', '')}")
                 event = StreamingTokenResponse(
                     event_type="final",
                     data={
@@ -309,9 +261,38 @@ class VirtualWebSocket:
                     session_id=self.session_id,
                 )
                 await self.event_queue.put(event)
+                logger.info(f"✅ 최종 결과 큐에 추가됨: {data.get('text', '')}")
+
+            elif data.get("type") == "speech_started":
+                logger.info("🎤 음성 시작 이벤트 처리")
+                event = StreamingTokenResponse(
+                    event_type="speech_start",
+                    data={"message": "음성 감지됨"},
+                    timestamp=time.time(),
+                    session_id=self.session_id,
+                )
+                await self.event_queue.put(event)
+
+            elif data.get("type") == "utterance_end":
+                logger.info("⏸️ 발화 종료 이벤트 처리")
+                event = StreamingTokenResponse(
+                    event_type="speech_end",
+                    data={"message": "발화 종료"},
+                    timestamp=time.time(),
+                    session_id=self.session_id,
+                )
+                await self.event_queue.put(event)
+
+            else:
+                logger.debug(
+                    f"🔍 처리되지 않은 메시지 타입: {data.get('type', 'unknown')}"
+                )
 
         except Exception as e:
             logger.error(f"❌ 가상 WebSocket 메시지 처리 오류: {e}")
+            import traceback
+
+            logger.error(f"상세 오류: {traceback.format_exc()}")
 
 
 # 글로벌 스트리밍 매니저 인스턴스
